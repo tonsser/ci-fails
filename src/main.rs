@@ -1,5 +1,6 @@
 use lazy_static::lazy_static;
 use quicli::prelude::*;
+use rayon::prelude::*;
 use regex::Regex;
 use reqwest;
 use serde_json::Value;
@@ -41,45 +42,49 @@ fn main() -> CliResult {
     let output_urls = body["steps"]
         .as_array()
         .unwrap()
-        .into_iter()
+        .into_par_iter()
         .flat_map(|step| step["actions"].as_array().unwrap())
         .filter(|action| action["status"] != "success")
         .filter(|action| action["name"] == "script/ci/run-with-retries")
         .map(|action| action["output_url"].as_str().unwrap());
 
-    let mut acc = HashSet::<String>::new();
+    let acc = output_urls
+        .flat_map(|url| {
+            println!("{:?}", url);
 
-    for url in output_urls {
-        let json = reqwest::get(url)
-            .unwrap()
-            .json::<Value>()
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .clone();
+            let json = reqwest::get(url)
+                .unwrap()
+                .json::<Value>()
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .clone();
 
-        let outputs = json
-            .into_iter()
-            .find(|thing| thing["type"] == "out")
-            .unwrap()
-            .as_object()
-            .unwrap()
-            .clone();
+            let outputs = json
+                .into_iter()
+                .find(|thing| thing["type"] == "out")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone();
 
-        let test_output = outputs["message"].as_str().unwrap();
-        let mut lines = test_output.lines().collect::<Vec<_>>();
-        lines.reverse();
+            let test_output = outputs["message"].as_str().unwrap();
+            let mut lines = test_output.lines().collect::<Vec<_>>();
+            lines.reverse();
 
-        for line in lines {
-            if line.contains("Failed examples") {
-                break;
+            let mut acc = HashSet::new();
+            for line in lines {
+                if line.contains("Failed examples") {
+                    break;
+                }
+
+                if line.starts_with("rspec ") {
+                    acc.insert(test_file(line));
+                }
             }
-
-            if line.starts_with("rspec ") {
-                acc.insert(test_file(line));
-            }
-        }
-    }
+            acc
+        })
+        .collect::<HashSet<_>>();
 
     for line in acc {
         println!("{}", line);
