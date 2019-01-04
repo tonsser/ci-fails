@@ -50,8 +50,6 @@ fn main() -> CliResult {
 
     let acc = output_urls
         .flat_map(|url| {
-            println!("{:?}", url);
-
             let json = reqwest::get(url)
                 .unwrap()
                 .json::<Value>()
